@@ -10,33 +10,23 @@ import json
 import re
 import os
 from dotenv import load_dotenv
-
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from typing import List, Optional
 
+# --- 초기 설정 ---
 load_dotenv()
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
-app = FastAPI(
-    title="보드게임 기획 AI 서비스",
-    description="Spring Boot 메인 서버의 요청에 따라 AI 기능을 제공합니다.",
-    version="1.3.0", # 버전 업데이트
+router = APIRouter(
+    prefix="/api/plans",
+    tags=["Concept"]
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# RAG용 데이터 및 FAISS 인덱스 설정 (이전과 동일)
+# --- RAG용 데이터 및 FAISS 인덱스 설정 ---
 retriever = None
 try:
-    df = pd.read_json("./boardgame_detaildata_1-101.json")
+    df = pd.read_json("./boardgame_detaildata_1-101.json") 
     if not df.empty:
         df_processed = df[['게임ID', '이름', '설명', '최소인원', '최대인원', '난이도', '카테고리', '메커니즘']].copy()
         df_processed.rename(columns={'카테고리': '테마', '최소인원': 'min_players', '최대인원': 'max_players', '난이도': 'difficulty_weight', '메커니즘': 'mechanics_list'}, inplace=True)
@@ -55,43 +45,44 @@ except Exception as e:
     print(f"Warning: RAG 데이터 파일 또는 FAISS 인덱스 생성 실패. {e}")
 
 
-# --- [수정] 성능 개선 및 한글 출력 강화를 위한 프롬프트 ---
-
-llm_generate = ChatOpenAI(model_name="gpt-4o", temperature=0.8) # 모델 성능 업그레이드 및 창의성 조절
+# --- LLM 및 프롬프트 정의 ---
+llm_generate = ChatOpenAI(model_name="gpt-4o", temperature=0.8)
 generate_concept_prompt_template = PromptTemplate(
     input_variables=["theme", "playerCount", "averageWeight", "retrieved_games"],
-    template="""
-# Mission: 당신은 세계 최고의 보드게임 크리에이티브 디렉터입니다. 당신의 임무는 단순한 아이디어를 넘어, 플레이어들에게 잊을 수 없는 경험을 선사할 '살아있는 세계'를 창조하는 것입니다.
-
-## Core Principles for World-Class Game Concepts:
-1.  **Theme-Mechanic Harmony (테마와 메커니즘의 조화):** 메커니즘은 테마를 뒷받침해야 합니다. 왜 이 테마에 이 메커니즘이 필수적인지 플레이어가 직관적으로 느껴야 합니다. '우주 탐험' 테마라면 '자원 관리' 메커니즘이 우주선의 한정된 산소나 연료를 표현하는 것처럼요.
-2.  **Narrative-Driven Experience (서사 중심의 경험):** 플레이어가 단순한 경쟁자가 아닌, 게임 세계관 속 주인공이 되도록 만드세요. `storyline`은 플레이어의 행동에 동기를 부여하고, `ideaText`는 게임의 핵심적인 드라마와 갈등을 담아야 합니다.
-3.  **Vivid & Specific Language (생생하고 구체적인 언어):** 추상적인 표현을 피하세요. '재미있는 상호작용' 대신 '상대방의 유물 카드를 복제하는 '모방' 마법 카드'와 같이 구체적으로 묘사하여 상상력을 자극해야 합니다.
-
-## Input Data Analysis:
-- User's Theme: {theme}
-- Player Count: {playerCount}
-- Target Difficulty: {averageWeight}
-- Inspirations from other games: {retrieved_games}
-
-## Output Language Requirement:
-- **All generated text for `ideaText`, `mechanics`, `storyline` MUST be in rich, natural KOREAN.** (결과물은 반드시 풍부하고 자연스러운 한국어로 작성되어야 합니다.)
-
-## Final Output Instruction:
-이제, 위의 모든 원칙과 요구사항을 따라 아래 JSON 형식에 맞춰 최종 결과물만을 생성해주세요. **JSON 코드 블록 외에 다른 설명은 절대 포함하지 마세요.**
-```json
-{{
-    "conceptId": 0,
-    "planId": 0,
-    "theme": "{theme}",
-    "playerCount": "{playerCount}",
-    "averageWeight": {averageWeight},
-    "ideaText": "[게임의 핵심 플레이 경험과 승리 목표를 서사 중심으로 생생하게 설명 (한국어)]",
-    "mechanics": "[핵심 메커니즘들을 나열하고, 각 메커니즘이 테마와 어떻게 유기적으로 연결되는지 구체적으로 설명 (한국어)]",
-    "storyline": "[플레이어가 몰입할 수 있는 매력적인 배경 세계관과 그 안에서 플레이어의 역할을 드라마틱하게 설명 (한국어)]",
-    "createdAt": " "
-}}
-```"""
+    template=(
+        "# Mission: 당신은 보드게임 업계의 전설적인 크리에이티브 디렉터, '컨셉 아키텍트'입니다. 당신의 임무는 플레이어의 마음에 각인될 독창적인 세계관과 경험을 설계하는 것입니다.\n\n"
+        
+        "## Creative Framework: The 'Golden Connection'\n"
+        "훌륭한 게임은 테마, 메커니즘, 플레이어 경험이 하나의 황금 고리(Golden Connection)로 연결되어 있습니다. 당신의 사고 과정은 다음 단계를 따라야 합니다.\n"
+        "1.  **[1단계: 영감 분석]** 주어진 영감(Inspirations)을 단순 참고하지 말고, 핵심적인 '재미의 본질'을 추출하세요. '이 게임은 왜 성공했을까?', '가장 독특한 메커니즘은 무엇인가?', '테마를 어떻게 살렸는가?'를 자문하며 분석해야 합니다.\n"
+        "2.  **[2단계: 경험 목표 정의]** 플레이어가 이 게임을 통해 어떤 '감정'과 '경험'을 하길 원하나요? (예: '자원이 고갈되는 절박함 속에서 생존하는 희열', '치밀한 심리전 끝에 상대의 허를 찌르는 쾌감', '나만의 제국을 건설하며 느끼는 뿌듯함') 구체적인 경험 목표를 설정하세요.\n"
+        "3.  **[3단계: 황금 고리 구축]** 설정한 '경험 목표'를 실현하기 위해, 입력된 '테마'와 가장 잘 어울리는 '핵심 메커니즘'을 결합하세요. 이 세 가지 요소(테마, 경험, 메커니즘)가 어떻게 서로를 강화시키는지 한 문장으로 정의해야 합니다. (예: '고대 유물' 테마에서, '경매' 메커니즘을 통해 '유물의 진정한 가치를 꿰뚫어 보는 고고학자의 경험'을 제공한다.) 이것이 당신이 만들 컨셉의 심장입니다.\n\n"
+        
+        "## Input Data Analysis:\n"
+        "- User's Theme: {theme}\n"
+        "- Player Count: {playerCount}\n"
+        "- Target Difficulty: {averageWeight}\n"
+        "- Inspirations from other games (Analyze, Don't Copy): \n{retrieved_games}\n\n"
+        
+        "## Output Language Requirement:\n"
+        "- **All generated text for the JSON output MUST be in rich, compelling, and natural KOREAN.**\n\n"
+        
+        "## Final Output Instruction:\n"
+        "이제 'Creative Framework'에 따라 깊이 있게 사고한 결과를 바탕으로, 아래 JSON 형식에 맞춰 최종 결과물만을 생성해주세요. **JSON 코드 블록 외에 다른 설명, 주석, 사고 과정은 절대 포함하지 마세요.**\n"
+        "```json\n"
+        "{{\n"
+        '    "conceptId": 0,\n'
+        '    "planId": 0,\n'
+        '    "theme": "{theme}",\n'
+        '    "playerCount": "{playerCount}",\n'
+        '    "averageWeight": {averageWeight},\n'
+        '    "ideaText": "[황금 고리를 바탕으로, 플레이어가 게임에서 경험할 핵심적인 재미와 최종 목표를 한 편의 영화 예고편처럼 흥미롭게 묘사하세요.]",\n'
+        '    "mechanics": "[핵심 메커니즘을 2~3개 선정하여 명확히 설명하세요. 각 메커니즘이 왜 이 테마를 살리고, 당신이 정의한 경험 목표를 달성하는 데 필수적인지 그 연결고리를 구체적으로 서술하세요.]",\n'
+        '    "storyline": "[플레이어를 단숨에 몰입시킬 매력적인 세계관과 그 속에서 플레이어가 맡게 될 역할을 부여하세요. 플레이가 왜 이 목표를 향해 나아가야 하는지에 대한 강력한 동기를 부여하는 스토리를 제시하세요.]",\n'
+        '    "createdAt": " "\n'
+        "}}\n"
+        "```"
+    )
 )
 concept_generation_chain = LLMChain(llm=llm_generate, prompt=generate_concept_prompt_template)
 
@@ -99,42 +90,45 @@ concept_generation_chain = LLMChain(llm=llm_generate, prompt=generate_concept_pr
 llm_regenerate = ChatOpenAI(model_name="gpt-4o", temperature=0.9)
 regenerate_concept_prompt_template = PromptTemplate(
     input_variables=["original_concept_json", "feedback", "plan_id"],
-    template="""
-# Mission: 당신은 기존 게임 컨셉에 새로운 생명을 불어넣는 '게임 컨셉 닥터'입니다. 원본 컨셉과 사용자의 피드백을 깊이 있게 분석하여, 컨셉을 한 단계 더 높은 차원으로 발전시키세요.
+    template=(
+        "# Mission: 당신은 침체된 게임 컨셉에 새로운 활력을 불어넣는 '컨셉 닥터'입니다. 날카로운 분석력으로 기존 컨셉의 장단점을 파악하고, 사용자의 피드백을 창의적으로 재해석하여 컨셉을 다음 단계로 진화시키세요.\n\n"
+        
+        "## Regeneration Framework: Diagnose & Prescribe\n"
+        "1.  **[1단계: 컨셉 진단]** 원본 컨셉(Original Concept)을 정밀하게 분석하세요.\n"
+        "    -   **Heart (심장):** 이 컨셉의 가장 매력적이고 유지해야 할 핵심 재미는 무엇인가?\n"
+        "    -   **Pain Point (통점):** 사용자의 피드백이 지적하고 있거나, 혹은 당신이 발견한 구조적 약점은 무엇인가?\n"
+        "2.  **[2단계: 피드백 재해석]** 사용자의 피드백(User's Feedback)의 표면적인 의미 너머에 있는 '근본적인 욕구'를 파악하세요. '너무 복잡하다'는 피드백은 '더 빠른 템포', '직관적인 선택지', '초보자를 위한 가이드' 등 다양한 해결책으로 이어질 수 있습니다.\n"
+        "3.  **[3단계: 치료 계획 수립]** 'Heart'는 강화하고 'Pain Point'는 해결하면서, 피드백의 '근본적인 욕구'를 충족시킬 구체적인 '치료 계획'을 수립하세요. (예: '기존의 스파이 테마(Heart)는 유지하되, 복잡한 자원 관리(Pain Point)를 과감히 삭제하고, 사용자의 '더 많은 상호작용' 욕구를 충족시키기 위해 '정보 거래 및 배신' 메커니즘을 도입한다.')\n\n"
+        
+        "## Input Data:\n"
+        "- Original Concept to Evolve: ```json\n{original_concept_json}\n```\n"
+        "- User's Feedback (Interpret the underlying desire): {feedback}\n"
+        "- Plan ID to maintain: {plan_id}\n\n"
 
-## Core Principles for Regeneration:
-1.  **Interpret the Core Intent (피드백의 핵심 의도 파악):** 사용자의 피드백이 '더 캐주얼하게'라면, 단순히 난이도를 낮추는 것을 넘어 '짧은 플레이 시간', '직관적인 규칙', '더 많은 소셜 요소' 등을 고민해야 합니다.
-2.  **Creative Evolution, Not Just Modification (단순 수정을 넘어 창의적 진화):** 피드백을 반영하되, 원본의 매력은 유지하거나 더 나은 방향으로 발전시켜야 합니다. 필요하다면 과감하게 기존 메커니즘을 버리고 새로운 것을 도입하세요.
-3.  **Maintain Coherence (개연성 유지):** 수정된 모든 요소(테마, 메커니즘, 스토리)가 서로 유기적으로 연결되어 하나의 완성된 경험을 제공해야 합니다.
-
-## Input Data:
-- Original Concept: ```json\n{original_concept_json}\n```
-- User's Feedback: {feedback}
-- Plan ID to maintain: {plan_id}
-
-## Output Language Requirement:
-- **All generated text for `theme`, `ideaText`, `mechanics`, `storyline` MUST be in rich, natural KOREAN.** (결과물은 반드시 풍부하고 자연스러운 한국어로 작성되어야 합니다.)
-
-## Final Output Instruction:
-이제, 위의 모든 원칙과 요구사항을 따라 아래 JSON 형식에 맞춰 최종 결과물만을 생성해주세요. **JSON 코드 블록 외에 다른 설명은 절대 포함하지 마세요.**
-```json
-{{
-    "conceptId": 0,
-    "planId": {plan_id},
-    "theme": "[피드백을 반영하여 수정되거나 완전히 새로워진 테마 (한국어)]",
-    "playerCount": "[새로운 컨셉에 가장 적합한 플레이어 수 (한국어)]",
-    "averageWeight": [피드백이 반영된 새로운 난이도 (1.0~5.0 사이의 실수)],
-    "ideaText": "[피드백이 반영된 새로운 핵심 플레이 경험을 서사 중심으로 생생하게 설명 (한국어)]",
-    "mechanics": "[수정된 컨셉의 핵심 메커니즘들을 구체적으로 설명 (한국어)]",
-    "storyline": "[새로운 테마와 분위기에 맞는 매력적인 스토리라인 (한국어)]",
-    "createdAt": " "
-}}
-```"""
+        "## Output Language Requirement:\n"
+        "- **All generated text for the JSON output MUST be in rich, compelling, and natural KOREAN.**\n\n"
+        
+        "## Final Output Instruction:\n"
+        "이제 'Regeneration Framework'에 따라 깊이 있게 사고한 결과를 바탕으로, 아래 JSON 형식에 맞춰 최종 결과물만을 생성해주세요. **JSON 코드 블록 외에 다른 설명, 주석, 사고 과정은 절대 포함하지 마세요.**\n"
+        "```json\n"
+        "{{\n"
+        '    "conceptId": 0,\n'
+        '    "planId": {plan_id},\n'
+        '    "theme": "[치료 계획에 따라 더욱 선명해지거나 새롭게 태어난 테마를 제시하세요.]",\n'
+        '    "playerCount": "[진화된 컨셉에 가장 이상적인 플레이어 수를 제시하세요. 기존과 동일할 수도, 달라질 수도 있습니다.]",\n'
+        '    "averageWeight": [피드백과 새로운 메커니즘을 반영한 목표 난이도를 1.0에서 5.0 사이의 숫자로 제시하세요],\n'
+        '    "ideaText": "[기존 컨셉과 어떻게 달라졌으며, 새로운 플레이 경험이 어떻게 더 매력적으로 변했는지 핵심을 짚어 설명하세요.]",\n'
+        '    "mechanics": "[치료 계획의 핵심적인 결과물입니다. 어떻게 수정되고, 추가되고, 삭제되었는지 명확히 설명하고, 이 새로운 메커니즘 조합이 어떻게 컨셉을 발전시켰는지 논리적으로 서술하세요.]",\n'
+        '    "storyline": "[진화된 테마와 메커니즘에 걸맞게, 플레이어의 몰입감을 한층 더 끌어올릴 수 있도록 수정되거나 완전히 새로워진 스토리를 들려주세요.]",\n'
+        '    "createdAt": " "\n'
+        "}}\n"
+        "```"
+    )
 )
 regenerate_concept_chain = LLMChain(llm=llm_regenerate, prompt=regenerate_concept_prompt_template)
 
 
-# Pydantic 모델 (변경 없음)
+# --- Pydantic 모델 ---
 class GenerateConceptRequest(BaseModel):
     theme: str
     playerCount: str
@@ -167,8 +161,8 @@ class ConceptResponse(BaseModel):
     createdAt: str
 
 
-# API 엔드포인트 (로직 변경 없음)
-@app.post("/api/plans/generate-concept", response_model=ConceptResponse, summary="새로운 보드게임 컨셉 생성")
+# --- API 엔드포인트 ---
+@router.post("/generate-concept", response_model=ConceptResponse, summary="새로운 보드게임 컨셉 생성")
 async def generate_concept_api(request: GenerateConceptRequest):
     retrieved_games_info = "유사 게임 정보를 찾을 수 없음."
     if retriever:
@@ -189,11 +183,10 @@ async def generate_concept_api(request: GenerateConceptRequest):
         
         match = re.search(r"```json\s*(\{.*?\})\s*```", response['text'], re.DOTALL)
         if not match:
-            # 백틱 없이 바로 JSON만 반환하는 경우를 대비한 추가 처리
             try:
                 concept = json.loads(response['text'])
             except json.JSONDecodeError:
-                 raise ValueError("LLM 응답에서 유효한 JSON을 찾을 수 없습니다.")
+                raise ValueError("LLM 응답에서 유효한 JSON을 찾을 수 없습니다.")
         else:
             json_str = match.group(1)
             concept = json.loads(json_str)
@@ -207,7 +200,7 @@ async def generate_concept_api(request: GenerateConceptRequest):
         raise HTTPException(status_code=500, detail=f"LLM 체인 실행 중 오류 발생: {str(e)}")
 
 
-@app.post("/api/plans/regenerate-concept", response_model=ConceptResponse, summary="기존 보드게임 컨셉 재생성")
+@router.post("/regenerate-concept", response_model=ConceptResponse, summary="기존 보드게임 컨셉 재생성")
 async def regenerate_concept_api(request: RegenerateConceptRequest):
     try:
         original_concept_json_str = request.originalConcept.json()
