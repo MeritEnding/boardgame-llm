@@ -1,82 +1,70 @@
-import pandas as pd
-from langchain_openai import ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 import json
 import re
 import os
 from dotenv import load_dotenv
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-
+# --- 초기 설정 ---
 load_dotenv()
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
-app = FastAPI(
-    title="보드게임 기획 AI 서비스",
-    description="Spring Boot로부터 컨셉/세계관 데이터를 받아 게임 목표, 구성요소, 규칙 등을 생성합니다.",
-    version="2.0.0",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+router = APIRouter(
+    prefix="/api/plans",
+    tags=["Goal"]
 )
 
 # --- LLM 및 프롬프트 정의 ---
 llm = ChatOpenAI(model_name="gpt-4o", temperature=0.7)
 
-# [요청사항] 제공해주신 프롬프트 템플릿을 그대로 유지합니다.
 game_objective_prompt_template = PromptTemplate(
     input_variables=["theme", "playerCount", "averageWeight", "ideaText", "mechanics", "storyline", "world_setting", "world_tone"],
-    template="""# Mission: 당신은 플레이어의 몰입도를 극대화하는 게임 목표를 설계하는 데 특화된 '리드 게임 디자이너'입니다. 당신의 임무는 주어진 컨셉과 세계관 정보를 깊이 있게 분석하여, 플레이어에게 강력한 동기를 부여하고 게임의 모든 메커니즘을 유기적으로 활용하게 만드는 핵심 게임 목표를 창조하는 것입니다.
+    template=(
+        "# Mission: 당신은 플레이어의 동기 부여에 통달한 '목표 설계의 대가'입니다. 당신의 임무는 주어진 컨셉의 영혼을 꿰뚫고, 모든 요소가 하나의 목표를 향해 달려가는 몰입감 넘치는 경험의 청사진을 그리는 것입니다.\n\n"
+        
+        "# Goal Design Framework: The 'Motivational Bridge'\n"
+        "최고의 게임 목표는 세계관의 '핵심 갈등'과 게임의 '핵심 행동(메커니즘)'을 잇는 '동기 부여의 다리(Motivational Bridge)'를 놓는 것과 같습니다.\n"
+        "1.  **[1단계: 핵심 갈등 추출]** 주어진 컨셉, 스토리, 세계관 정보를 종합하여 이 세계의 '근본적인 문제' 또는 '가장 중요한 드라마'가 무엇인지 한 문장으로 정의하세요. (예: '고대 신들의 유물이 깨어나 세상의 균형을 위협하고 있다', '오염된 대지를 정화할 마지막 남은 희망의 씨앗을 차지해야 한다.') 이것이 목표의 존재 이유가 됩니다.\n"
+        "2.  **[2단계: 메커니즘의 행동화]** 주어진 메커니즘이 플레이어의 어떤 '구체적인 행동'으로 나타나는지 분석하세요. (예: '일꾼 놓기' -> '자원 채집', '영향력 확장', '기술 연구' / '셋 컬렉션' -> '고대 유물 조각 수집', '예언의 파편 조합')\n"
+        "3.  **[3단계: 동기 부여의 다리 건설]** '핵심 갈등'을 해결하기 위해 '메커니즘의 행동화'를 어떻게 사용해야 하는지 연결하여 최종 목표를 설계하세요. 플레이어의 모든 행동이 이 위대한 목표를 향한 의미 있는 발걸음이 되어야 합니다.\n\n"
 
-# Core Principles of Objective Design:
-1.  **서사적 연결 (Narrative-Driven):** 목표는 세계관의 핵심 갈등을 해결하는 행위여야 합니다. '왜 싸우는가?'에 대한 답을 목표가 제시해야 합니다. 예를 들어, '에테르 크리스탈'을 차지하기 위해 경쟁하는 세계관이라면, 목표는 '가장 많은 크리스탈 조각을 모으거나 중앙 제단을 활성화하는 것'이 될 수 있습니다.
-2.  **메커니즘 활용 (Mechanics-Centric):** 설계된 목표는 주어진 메커니즘(예: 지역 점령, 덱 빌딩)을 자연스럽게 사용하도록 유도해야 합니다. 메커니즘이 목표 달성을 위한 '도구'가 되어야 합니다.
-3.  **명확성과 긴장감 (Clarity & Tension):** 승리 조건은 명확해야 하지만, 게임이 끝날 때까지 승자를 예측하기 어렵게 만들어 긴장감을 유지해야 합니다. 단 하나의 길이 아닌, 여러 부가 목표를 통해 점수를 획득하는 방식이 좋은 예시입니다.
+        "# Input Data Analysis:\n"
+        "---\n"
+        "**보드게임 컨셉 및 세계관 정보:**\n"
+        "- 테마: {theme}\n"
+        "- 플레이 인원수: {playerCount}\n"
+        "- 난이도: {averageWeight}\n"
+        "- 핵심 아이디어: {ideaText}\n"
+        "- 주요 메커니즘: {mechanics}\n"
+        "- 기존 스토리라인: {storyline}\n"
+        "- 세계관 설정: {world_setting}\n"
+        "- 세계관 분위기: {world_tone}\n"
+        "---\n\n"
 
-# Input Data Analysis:
----
-**보드게임 컨셉 및 세계관 정보:**
--   테마: {theme}
--   플레이 인원수: {playerCount}
--   난이도: {averageWeight}
--   핵심 아이디어: {ideaText}
--   주요 메커니즘: {mechanics}
--   기존 스토리라인: {storyline}
--   세계관 설정: {world_setting}
--   세계관 분위기: {world_tone}
----
-
-# Final Output Instruction:
-이제, 위의 모든 지침과 원칙을 따라 아래 JSON 형식에 맞춰 최종 결과물만을 생성해주세요.
-**JSON 코드 블록 외에 어떤 인사, 설명, 추가 텍스트도 절대 포함해서는 안 됩니다.**
-모든 내용은 **풍부하고 자연스러운 한국어**로 작성되어야 합니다.
-
-```json
-{{
-  "mainGoal": "[게임의 최종 승리 조건을 한 문장으로 명확하게 정의. 플레이어는 무엇을 달성하면 게임에서 승리하는가? (한국어)]",
-  "subGoals": [
-    "[주요 목표 달성을 돕거나, 점수를 얻을 수 있는 구체적인 보조 목표들. 플레이어에게 다양한 전략적 선택지를 제공해야 함. (한국어)]",
-    "[또 다른 보조 목표 (필요 시 추가). (한국어)]"
-  ],
-  "winConditionType": "[승리 조건의 핵심 분류. (예: 점수 경쟁형, 목표 달성형, 마지막 생존형, 비밀 임무형)]",
-  "designNote": "[이러한 게임 목표가 왜 이 게임에 최적인지에 대한 설계 의도. 어떻게 테마를 강화하고, 플레이어 간의 상호작용을 유도하는지 설명. (한국어)]"
-}}
-    ```
-    """
+        "# Final Output Instruction:\n"
+        "이제 'Goal Design Framework'에 따라 깊이 있게 사고한 결과를 바탕으로, 아래 JSON 형식에 맞춰 최종 결과물만을 생성해주세요.\n"
+        "**JSON 코드 블록 외에 어떤 인사, 설명, 추가 텍스트도 절대 포함해서는 안 됩니다.**\n"
+        "모든 내용은 **풍부하고 자연스러운 한국어**로 작성되어야 합니다.\n\n"
+        "```json\n"
+        "{{\n"
+        '   "mainGoal": "[1단계에서 정의한 ‘핵심 갈등’을 해결하는, 게임의 가장 중요한 최종 승리 조건을 한 문장으로 명확하게 제시하세요.]",\n'
+        '   "subGoals": [\n'
+        '       "[주요 목표로 가는 과정에서, 2단계에서 분석한 ‘메커니즘의 행동화’를 활용하여 점수를 얻거나 유리한 위치를 차지할 수 있는 구체적인 보조 목표들을 2~3개 제시하세요.]",\n'
+        '       "[이 보조 목표들은 플레이어에게 다양한 전략적 선택지를 제공해야 합니다.]"\n'
+        '   ],\n'
+        '   "winConditionType": "[승리 조건의 핵심 분류를 제시하세요. (예: 최고 점수 획득형, 특정 목표 선점형, 마지막 생존자형, 공동 목표 달성형, 비밀 임무 완수형)]",\n'
+        '   "designNote": "[3단계에서 구축한 ‘동기 부여의 다리’에 대해 설명하세요. 즉, 이 게임 목표가 어떻게 세계관의 핵심 갈등을 플레이어의 행동(메커니즘)을 통해 풀어내는지, 그리고 이것이 왜 플레이어에게 강력한 동기를 부여하는지에 대한 설계자의 핵심 의도를 서술하세요.]"\n'
+        "}}\n"
+        "```"
+    )
 )
 game_objective_chain = LLMChain(llm=llm, prompt=game_objective_prompt_template)
 
 
 # --- Pydantic 모델 정의 ---
-# [수정] Spring Boot에서 모든 데이터를 직접 전달받도록 모델 변경
 class GoalGenerationRequest(BaseModel):
     theme: str
     playerCount: str
@@ -95,15 +83,13 @@ class GameObjectiveResponse(BaseModel):
 
 
 # --- API 엔드포인트 ---
-# [수정] 더 이상 내부 데이터를 조회하지 않고, 받은 데이터로 바로 LLM 호출
-@app.post("/api/plans/generate-goal", response_model=GameObjectiveResponse, summary="게임 목표 생성")
+@router.post("/generate-goal", response_model=GameObjectiveResponse, summary="게임 목표 생성")
 async def generate_objective_api(request: GoalGenerationRequest):
     try:
         response = game_objective_chain.invoke(request.dict())
         
         match = re.search(r"```json\s*(\{.*?\})\s*```", response['text'], re.DOTALL)
         if not match:
-            # LLM이 코드 블록 없이 바로 JSON을 반환하는 경우 대비
             return json.loads(response['text'])
         
         json_str = match.group(1)
